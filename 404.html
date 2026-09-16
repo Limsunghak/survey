@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>설문</title>
+<style>
+  :root{--bg:#f6f7f9;--card:#fff;--fg:#1c1f24;--muted:#6b7280;--line:#e5e7eb;--accent:#2563eb;--err:#dc2626}
+  @media(prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8ec;--muted:#9aa3b2;--line:#2a2f3a;--accent:#60a5fa}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+  main{max-width:640px;margin:0 auto;padding:24px 16px 64px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+  h1{font-size:1.35rem;margin:0 0 8px}
+  .desc{color:var(--muted);margin:0 0 4px;white-space:pre-line;overflow-wrap:anywhere}
+  .desc a{color:var(--accent)}
+  .info{border-top:1px solid var(--line);margin-top:32px;padding-top:16px;font-size:.92rem}
+  .info-title{font-weight:600;margin-bottom:6px}
+  .anon{font-size:.85rem;color:var(--muted);border-top:1px solid var(--line);margin-top:12px;padding-top:10px}
+  fieldset.q{border:0;padding:0;margin:24px 0 0}
+  legend{font-weight:600;padding:0;margin-bottom:8px}
+  .req{color:var(--err)}
+  .opt{display:flex;gap:10px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer}
+  .opt:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+  .scale-row{display:flex;gap:6px}
+  .scale{flex:1;text-align:center;border:1px solid var(--line);border-radius:8px;padding:10px 0;cursor:pointer}
+  .scale input{display:none}
+  .scale:has(input:checked){border-color:var(--accent);background:var(--accent);color:#fff}
+  .scale-labels{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);margin-top:4px}
+  textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;background:transparent;color:inherit}
+  .err{color:var(--err);font-size:.85rem;margin-top:4px}
+  fieldset.invalid legend{color:var(--err)}
+  button{width:100%;margin-top:28px;padding:14px;border:0;border-radius:10px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button[disabled]{opacity:.6}
+  .done{text-align:center;padding:40px 0}
+  .done h1{margin-bottom:8px}
+  .hp{position:absolute;left:-9999px;opacity:0;height:0}
+</style>
+</head>
+<body>
+<main><div class="card" id="card"><p class="desc">설문을 불러오는 중입니다…</p></div></main>
+<script>
+(async function () {
+  const card = document.getElementById('card');
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const slug = (new URLSearchParams(location.search).get('s') || '').trim();
+  const API_BASE = 'https://yenmwvbmwdrxkprwzmgi.supabase.co'; // Supabase 프로젝트 주소 (어느 호스트에 올려도 동작)
+  const api = API_BASE + '/functions/v1/survey/' + encodeURIComponent(slug);
+  const linkify = t => esc(t).replace(/https?:\/\/[^\s<]+/g, u => '<a href="' + u + '" target="_blank" rel="noopener">' + u + '</a>');
+  const fail = (title, msg) => { card.innerHTML = '<h1>' + esc(title) + '</h1><p class="desc">' + esc(msg) + '</p>'; };
+
+  if (!/^[a-z0-9-]{2,40}$/.test(slug)) return fail('설문을 찾을 수 없습니다', '주소를 다시 확인해 주세요.');
+
+  let s;
+  try {
+    const r = await fetch(api + '?format=json', { cache: 'no-store' });
+    if (r.status === 404) return fail('설문을 찾을 수 없습니다', '주소를 다시 확인해 주세요.');
+    if (!r.ok) throw new Error();
+    s = await r.json();
+  } catch (e) { return fail('일시적인 오류', '잠시 후 다시 시도해 주세요.'); }
+
+  document.title = s.title;
+  if (!s.open) return fail(s.title, '이 설문은 마감되었습니다. 참여해 주셔서 감사합니다.');
+
+  const renderQ = (q, i) => {
+    const req = q.required ? '<span class="req">*</span>' : '';
+    let body = '';
+    if (q.type === 'single' || q.type === 'multi') {
+      const t = q.type === 'single' ? 'radio' : 'checkbox';
+      body = (q.options || []).map(o => '<label class="opt"><input type="' + t + '" name="' + esc(q.id) + '" value="' + esc(o) + '"><span>' + esc(o) + '</span></label>').join('');
+    } else if (q.type === 'scale') {
+      const min = q.min ?? 1, max = q.max ?? 5, cells = [];
+      for (let n = min; n <= max; n++) cells.push('<label class="scale"><input type="radio" name="' + esc(q.id) + '" value="' + n + '"><span>' + n + '</span></label>');
+      body = '<div class="scale-row">' + cells.join('') + '</div><div class="scale-labels"><span>' + esc(q.min_label || '') + '</span><span>' + esc(q.max_label || '') + '</span></div>';
+    } else {
+      body = '<textarea name="' + esc(q.id) + '" rows="4" maxlength="' + (q.max_length || 1000) + '" placeholder="' + esc(q.placeholder || '') + '"></textarea>';
+    }
+    return '<fieldset class="q" data-id="' + esc(q.id) + '" data-type="' + esc(q.type) + '" data-required="' + (q.required ? 1 : 0) + '">'
+      + '<legend>' + (i + 1) + '. ' + esc(q.label) + ' ' + req + '</legend>' + body
+      + '<div class="err" hidden>필수 문항입니다.</div></fieldset>';
+  };
+
+  card.innerHTML = '<h1>' + esc(s.title) + '</h1>'
+    + '<p class="anon">🔒 이 설문은 익명입니다. 이름, 이메일, IP 주소 등 응답자를 식별할 수 있는 정보는 저장하지 않습니다.</p>'
+    + '<form id="f" novalidate>' + s.questions.map(renderQ).join('')
+    + '<input class="hp" type="text" name="website" tabindex="-1" autocomplete="off">'
+    + '<button type="submit">제출하기</button><div class="err" id="gerr" hidden></div></form>'
+    + (s.description ? '<div class="info"><div class="info-title">안내</div><p class="desc">' + linkify(s.description) + '</p></div>' : '');
+
+  const f = document.getElementById('f'), gerr = document.getElementById('gerr');
+  f.addEventListener('submit', async e => {
+    e.preventDefault(); gerr.hidden = true;
+    const answers = {}; let firstBad = null;
+    for (const fs of f.querySelectorAll('fieldset.q')) {
+      const id = fs.dataset.id, type = fs.dataset.type, req = fs.dataset.required === '1';
+      let v;
+      if (type === 'multi') v = [...fs.querySelectorAll('input:checked')].map(i => i.value);
+      else if (type === 'text') v = fs.querySelector('textarea').value.trim();
+      else v = fs.querySelector('input:checked')?.value;
+      const empty = v == null || v === '' || (Array.isArray(v) && !v.length);
+      fs.classList.toggle('invalid', req && empty);
+      fs.querySelector('.err').hidden = !(req && empty);
+      if (req && empty) { firstBad ??= fs; continue; }
+      if (!empty) answers[id] = type === 'scale' ? Number(v) : v;
+    }
+    if (firstBad) { firstBad.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    const btn = f.querySelector('button'); btn.disabled = true; btn.textContent = '제출 중…';
+    try {
+      const r = await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ answers, website: f.website.value }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || '제출에 실패했습니다.');
+      card.innerHTML = '<div class="done"><h1>제출 완료</h1><p>' + esc(j.thank_you || '응답해 주셔서 감사합니다.') + '</p></div>';
+      window.scrollTo(0, 0);
+    } catch (err) { gerr.textContent = err.message; gerr.hidden = false; btn.disabled = false; btn.textContent = '제출하기'; }
+  });
+})();
+</script>
+</body>
+</html>
